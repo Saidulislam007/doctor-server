@@ -62,23 +62,19 @@ async function run() {
       res.json(appointments);
     });
 
-    // 🎯 ৩. নির্দিষ্ট অ্যাপয়েন্টমেন্ট আপডেট করা (Update) -> আপনার দেওয়া লজিক অনুযায়ী ইমপ্লিমেন্ট করা হলো
+    // ৩. নির্দিষ্ট অ্যাপয়েন্টমেন্ট আপডেট করা (Update)
     app.put('/appointments/:id', async (req, res) => {
       try {
-        const id = req.params.id; // ইউআরএল থেকে ডাইনামিক আইডি নেওয়া হচ্ছে
-        const updatedAppointment = req.body; // ফ্রন্টএন্ড থেকে পাঠানো নতুন ডেটা
+        const id = req.params.id; 
+        const updatedAppointment = req.body; 
         
-        // মঙ্গোডিবির ইউনিক অবজেক্ট আইডি ম্যাচ করার ফিল্টার (এখানে id এবং _id দুইটার সেফটি রাখা হয়েছে)
         let filter = { $or: [{ id: id }, { id: id }] };
-        
-        // আইডিটি যদি মঙ্গোডিবির নেটিভ ObjectId ফরম্যাটের সাথে মিলে যায়, তবে সেটিকে ObjectId-তে রূপান্তর করে ফিল্টার করা হবে
         if (ObjectId.isValid(id)) {
           filter = { $or: [{ id: id }, { _id: new ObjectId(id) }] };
         }
         
-        const options = { upsert: false }; // ডাটা না থাকলে নতুন করে তৈরি করার দরকার নেই
+        const options = { upsert: false };
         
-        // কোন কোন ফিল্ড আপডেট হবে তা সেট করা হচ্ছে
         const updateDoc = {
           $set: {
             patientName: updatedAppointment.patientName,
@@ -115,19 +111,54 @@ async function run() {
     });
 
     // ================= 👤 PATIENT USERS APIS =================
+    // ১. নতুন ইউজার ডাটাবেজে ইনসার্ট করা (Create)
     app.post('/users', async (req, res) => {
       const user = req.body;
       const result = await usersCollection.insertOne(user);
       res.json(result);
     });
 
+    // ২. সব ইউজারের লিস্ট দেখা (Read)
     app.get('/users', async (req, res) => {
       const cursor = usersCollection.find({});
       const users = await cursor.toArray();
       res.json(users);
     });
 
-    // ডাটাবেেজ হেলথ চেক
+    // 🎯 ৩. নির্দিষ্ট ইউজারের প্রোফাইল আপডেট করা (Update) -> এখানে নতুন মেথডটি বসানো হয়েছে
+    app.put('/users/:email', async (req, res) => {
+      try {
+        const email = req.params.email; // ইমেইল বা আইডি দিয়ে সহজে ইউজার ট্র্যাক করার জন্য
+        const updatedUser = req.body;
+        
+        // Better-Auth এর ইমেইল, কাস্টম uid অথবা মঙ্গোডিবির নেটিভ অবজেক্ট আইডি সবকিছুর জন্যই সেফটি ফিল্টার
+        let filter = { $or: [{ email: email }, { uid: email }] };
+        if (ObjectId.isValid(email)) {
+          filter = { $or: [{ email: email }, { _id: new ObjectId(email) }] };
+        }
+
+        const options = { upsert: true }; // 💡 ট্রিক: ইউজার যদি আগে থেকে ডাটাবেজে না থাকে, তবে সে নতুন প্রোফাইল তৈরি করে নেবে (Upsert: true)
+
+        const updateDoc = {
+          $set: {
+            name: updatedUser.name,
+            phone: updatedUser.phone,
+            address: updatedUser.address,
+            bloodGroup: updatedUser.bloodGroup,
+            image: updatedUser.image,
+            updatedAt: new Date()
+          },
+        };
+
+        const result = await usersCollection.updateOne(filter, updateDoc, options);
+        res.json(result);
+      } catch (error) {
+        console.error("❌ User update error:", error.message);
+        res.status(500).json({ error: "Failed to sync and update user personal profile metrics" });
+      }
+    });
+
+    // ডাটাবেজ হেলথ চেক
     await client.db("admin").command({ ping: 1 });
     console.log("🎯 Pinged your deployment. Connected to MongoDB!");
 
