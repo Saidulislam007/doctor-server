@@ -33,7 +33,7 @@ async function run() {
     await client.connect();
 
     const database = client.db('doctors_portal');
-    // const usersCollection = database.collection('users');
+    const usersCollection = database.collection('users');
     const appointmentsCollection = database.collection('appointments');
     
     app.post('/appointments', async (req, res) => {
