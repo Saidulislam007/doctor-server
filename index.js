@@ -33,8 +33,14 @@ async function run() {
     await client.connect();
 
     const database = client.db('doctors_portal');
-    const usersCollection = database.collection('users');
+    const doctorsCollection = database.collection('doctors');
     const appointmentsCollection = database.collection('appointments');
+
+    app.get('/doctors', async (req, res) => {
+      const cursor = doctorsCollection.find({});
+      const doctors = await cursor.toArray();
+      res.json(doctors);
+    }); 
     
     app.post('/appointments', async (req, res) => {
       const appointment = req.body;
