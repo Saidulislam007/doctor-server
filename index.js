@@ -35,7 +35,7 @@ async function run() {
     const database = client.db('doctors_portal');
     const doctorsCollection = database.collection('doctors');
     const appointmentsCollection = database.collection('appointments');
-
+    
     app.get('/doctors', async (req, res) => {
       const cursor = doctorsCollection.find({});
       const doctors = await cursor.toArray();
@@ -46,6 +46,12 @@ async function run() {
       const appointment = req.body;
       const result = await appointmentsCollection.insertOne(appointment);
       res.json(result);
+    });
+
+    app.get('/appointments', async (req, res) => {
+      const cursor = appointmentsCollection.find({});
+      const appointments = await cursor.toArray();
+      res.json(appointments);
     });
 
 
