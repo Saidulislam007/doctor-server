@@ -4,7 +4,8 @@ dns.setServers(["8.8.8.8", "8.8.4.4"]);
 const express = require('express');
 const dotenv = require('dotenv');
 const cors = require('cors');
-const { MongoClient, ServerApiVersion } = require('mongodb');
+// 🎯 ObjectId ইম্পোর্ট করা হলো যাতে মঙ্গোডিবির নেটিভ _id ধরে কাজ করা যায় সেফলি
+const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
 
 dotenv.config(); 
 
@@ -47,16 +48,70 @@ async function run() {
     }); 
     
     // ================= 📅 APPOINTMENTS APIS =================
+    // ১. অ্যাপয়েন্টমেন্ট তৈরি করা (Create)
     app.post('/appointments', async (req, res) => {
       const appointment = req.body;
       const result = await appointmentsCollection.insertOne(appointment);
       res.json(result);
     });
 
+    // ২. সব অ্যাপয়েন্টমেন্ট দেখা (Read)
     app.get('/appointments', async (req, res) => {
       const cursor = appointmentsCollection.find({});
       const appointments = await cursor.toArray();
       res.json(appointments);
+    });
+
+    // 🎯 ৩. নির্দিষ্ট অ্যাপয়েন্টমেন্ট আপডেট করা (Update) -> আপনার দেওয়া লজিক অনুযায়ী ইমপ্লিমেন্ট করা হলো
+    app.put('/appointments/:id', async (req, res) => {
+      try {
+        const id = req.params.id; // ইউআরএল থেকে ডাইনামিক আইডি নেওয়া হচ্ছে
+        const updatedAppointment = req.body; // ফ্রন্টএন্ড থেকে পাঠানো নতুন ডেটা
+        
+        // মঙ্গোডিবির ইউনিক অবজেক্ট আইডি ম্যাচ করার ফিল্টার (এখানে id এবং _id দুইটার সেফটি রাখা হয়েছে)
+        let filter = { $or: [{ id: id }, { id: id }] };
+        
+        // আইডিটি যদি মঙ্গোডিবির নেটিভ ObjectId ফরম্যাটের সাথে মিলে যায়, তবে সেটিকে ObjectId-তে রূপান্তর করে ফিল্টার করা হবে
+        if (ObjectId.isValid(id)) {
+          filter = { $or: [{ id: id }, { _id: new ObjectId(id) }] };
+        }
+        
+        const options = { upsert: false }; // ডাটা না থাকলে নতুন করে তৈরি করার দরকার নেই
+        
+        // কোন কোন ফিল্ড আপডেট হবে তা সেট করা হচ্ছে
+        const updateDoc = {
+          $set: {
+            patientName: updatedAppointment.patientName,
+            patientPhone: updatedAppointment.patientPhone,
+            appointmentDate: updatedAppointment.appointmentDate,
+            timeSlot: updatedAppointment.timeSlot,
+          },
+        };
+
+        const result = await appointmentsCollection.updateOne(filter, updateDoc, options);
+        res.json(result);
+      } catch (error) {
+        console.error("❌ Update error:", error.message);
+        res.status(500).json({ error: "Failed to update appointment record" });
+      }
+    });
+
+    // ৪. নির্দিষ্ট অ্যাপয়েন্টমেন্ট ডিলিট করা (Delete)
+    app.delete('/appointments/:id', async (req, res) => {
+      try {
+        const id = req.params.id;
+        
+        let query = { id: id };
+        if (ObjectId.isValid(id)) {
+          query = { $or: [{ id: id }, { _id: new ObjectId(id) }] };
+        }
+
+        const result = await appointmentsCollection.deleteOne(query);
+        res.json(result);
+      } catch (error) {
+        console.error("❌ Delete error:", error.message);
+        res.status(500).json({ error: "Failed to delete appointment from database" });
+      }
     });
 
     // ================= 👤 PATIENT USERS APIS =================
@@ -72,7 +127,7 @@ async function run() {
       res.json(users);
     });
 
-    // ডাটাবেজ হেলথ চেক
+    // ডাটাবেেজ হেলথ চেক
     await client.db("admin").command({ ping: 1 });
     console.log("🎯 Pinged your deployment. Connected to MongoDB!");
 
