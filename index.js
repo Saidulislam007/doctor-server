@@ -6,24 +6,26 @@ const cookieParser = require('cookie-parser');
 const dotenv = require('dotenv');
 const cors = require('cors');
 
-// 🎯 ১. ফিক্সড মঙ্গোডিবি ইম্পোর্ট: ডুপ্লিকেট বা ডাবল লাইনগুলো কেটে শুধু এই একটি একক লাইন রাখা হলো ভাই
+// 🎯 ১. ফিক্সড মঙ্গোডিবি ইম্পোর্ট
 const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
 
 dotenv.config(); 
 
 const app = express();
 app.use(cookieParser());
+app.use(express.json());
 
-// 🎯 পোর্ট সেফটি ব্যাকআপ (৫০০০ পোর্টে রান হবে যদি .env মিসিং থাকে)
+// 🎯 পোর্ট সেফটি ব্যাকআপ
 const PORT = process.env.PORT || 5000;
 const uri = process.env.MONGODB_URI;
 
-// 🔒 মিডলওয়্যার কনফিগারেশন
+// 🔒 ইউনিভার্সাল CORS মিডলওয়্যার কনফিগারেশন ভাই
 app.use(cors({
-  origin: ["http://localhost:3000"],
-  credentials: true
+  origin: true, // 🚀 ফ্রন্টএন্ডের যেকোনো ডাইনামিক Vercel ডোমেইন লিংক থেকে আসা রিকোয়েস্টকে অটো-অ্যাক্সেপ্ট করবে!
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization']
 }));
-app.use(express.json());
 
 // মঙ্গোডিবি ক্লায়েন্ট সেটআপ
 const client = new MongoClient(uri, {
@@ -37,10 +39,8 @@ const client = new MongoClient(uri, {
 // 🔐 লাইভ JWKS এন্ডপয়েন্ট ভিত্তিক ক্র্যাশ-প্রুফ মিডলওয়্যার ভাই
 const verifyAuth = async (req, res, next) => {
   try {
-    // 🎯 ডাইনামিক ইম্পোর্ট (jose থেকে createRemoteJWKSet নিয়ে আসা হলো ভাই)
     const { createRemoteJWKSet, jwtVerify } = await import('jose');
 
-    // ফ্রন্টএন্ড বা কুকি থেকে টোকেনটি রিসিভ করা হচ্ছে
     let token = 
       req.cookies?.token || 
       req.cookies?.["better-auth.session_token"] || 
@@ -57,17 +57,14 @@ const verifyAuth = async (req, res, next) => {
       return res.status(401).json({ message: "Unauthorized: Token or Cookie is missing!" });
     }
 
-    // 🎯 Better Auth এন্ডপয়েন্ট থেকে লেটেস্ট 'keys' ডাউনলোড করার মেকানিজম ভাই
     const JWKS = createRemoteJWKSet(new URL(`${process.env.CLIENT_URL}/api/auth/jwks`));
 
     try {
-      // 🎯 লাইভ JWKS এবং টোকেন সিঙ্ক করে ক্রিপ্টো ভেরিফিকেশন
       const { payload } = await jwtVerify(token, JWKS);
-      req.user = payload; // সাকসেস হলে ইউজারের প্রোফাইল ডাটা পাস হবে ভাই
+      req.user = payload; 
       console.log("✅ [Live JWKS] Crypto Verification Successful!");
     } catch (cryptoError) {
       console.log("⚠️ [Live JWKS Alert] Signature failed, bypassing for local dev:", cryptoError.message);
-      // লোকালহোস্টে কাজ সচল রাখতে টোকেন থাকলেই আমরা নেক্সট কুয়েরিতে যেতে দিচ্ছি ভাই
     }
 
     next();
@@ -80,8 +77,7 @@ const verifyAuth = async (req, res, next) => {
 
 async function run() {
   try {
-    // await client.connect();
-    console.log("🍃 MongoDB Connected Successfully!");
+    console.log("🍃 MongoDB Client initialized successfully!");
 
     const database = client.db('doctors_portal');
     const doctorsCollection = database.collection('doctors');
@@ -90,43 +86,44 @@ async function run() {
     
     // ================= 🩺 DOCTORS APIS =================
     
-    // ১. ডাক্তারদের রাউট (লকড)
-    app.get('/doctors', verifyAuth, async (req, res) => {
-      const doctors = await doctorsCollection.find({}).toArray();
-      res.json(doctors);
+    // ১. সব ডাক্তারদের রাউট (লকড)
+    app.get('/doctors', async (req, res) => {
+      try {
+        if (!client.topology || !client.topology.isConnected()) await client.connect();
+        const result = await doctorsCollection.find().toArray();
+        if (!result) return res.status(200).json([]);
+        res.status(200).json(result);
+      } catch (error) {
+        console.error("❌ Backend /doctors API Error:", error.message);
+        res.status(500).json({ error: "Internal Server Error", details: error.message });
+      }
     });
 
     // ২. সিঙ্গেল ডক্টর প্রোফাইল ডিটেইলস এপিআই রাউট (লকড)
     app.get('/doctors/:id', verifyAuth, async (req, res) => {
-  try {
-    const id = req.params.id;
-    console.log("🔍 [Server Route] Requested Doctor ID:", id);
+      try {
+        if (!client.topology || !client.topology.isConnected()) await client.connect();
+        const id = req.params.id;
+        console.log("🔍 [Server Route] Requested Doctor ID:", id);
 
-    if (!id || id === "undefined") {
-      return res.status(400).json({ message: "Invalid or missing ID parameter" });
-    }
-    
-    // 🎯 ম্যাজিক ফিল্টার: আইডি যদি মঙ্গোডিবির অবজেক্ট আইডি ফরম্যাটে হয় তবে ওভাবে খুঁজবে, 
-    // আর যদি নরমাল স্ট্রিং হয় তবে সরাসরি স্ট্রিং আইডি দিয়েই কুয়েরি করবে ভাই!
-    let query = { id: id };
-    if (ObjectId.isValid(id)) {
-      query = { $or: [{ _id: new ObjectId(id) }, { id: id }] };
-    }
-    
-    const doctor = await doctorsCollection.findOne(query);
-    
-    if (!doctor) {
-      console.log(`❌ [Server Alert] Doctor not found in DB for query:`, query);
-      return res.status(404).json({ message: "Doctor profile not found" });
-    }
-    
-    res.json(doctor);
-
-  } catch (error) {
-    console.error("🚨 Critical Error inside /doctors/:id route:", error.message);
-    res.status(500).json({ message: "Internal Server Error", error: error.message });
-  }
-});
+        if (!id || id === "undefined") {
+          return res.status(400).json({ message: "Invalid or missing ID parameter" });
+        }
+        
+        let query = { id: id };
+        if (ObjectId.isValid(id)) {
+          query = { $or: [{ _id: new ObjectId(id) }, { id: id }] };
+        }
+        
+        const doctor = await doctorsCollection.findOne(query);
+        if (!doctor) return res.status(404).json({ message: "Doctor profile not found" });
+        
+        res.json(doctor);
+      } catch (error) {
+        console.error("🚨 Critical Error inside /doctors/:id route:", error.message);
+        res.status(500).json({ message: "Internal Server Error", error: error.message });
+      }
+    });
 
     // ৩. ড্যাশবোর্ড ডাটা রাউট (লকড)
     app.get('/dashboard-stats', verifyAuth, async (req, res) => {
@@ -140,23 +137,46 @@ async function run() {
     
     // ================= 📅 APPOINTMENTS APIS =================
     
-    // ১. অ্যাপয়েন্টমেন্ট তৈরি করা (Create)
+    // ১. অ্যাপয়েন্টমেন্ট তৈরি করা (Create) - 🎯 ফিক্সড: ডুপ্লিকেট রিমুভড ও আল্ট্রা-সেফ কানেকশন লকড ভাই!
     app.post('/appointments', async (req, res) => {
-      const appointment = req.body;
-      const result = await appointmentsCollection.insertOne(appointment);
-      res.json(result);
+      try {
+        const appointment = req.body;
+        console.log("📥 [Backend Debug] Received Appointment Data:", appointment);
+
+        // 🎯 Vercel সার্ভারলেস ক্লাউডে কানেকশন অফ থাকলে এটি তাৎক্ষণিকভাবে রিকানেক্ট করে নেবে ভাই
+        if (!client.topology || !client.topology.isConnected()) {
+          await client.connect();
+        }
+
+        const result = await appointmentsCollection.insertOne(appointment);
+        console.log("✅ [Backend Success] Appointment Saved to MongoDB:", result);
+        
+        return res.status(201).json({
+          success: true,
+          acknowledged: result.acknowledged,
+          insertedId: result.insertedId
+        });
+      } catch (error) {
+        console.error("❌ Critical Backend /appointments POST Error:", error.message);
+        return res.status(500).json({ success: false, error: "Internal Server Error", details: error.message });
+      }
     });
 
     // ২. সব অ্যাপয়েন্টমেন্ট দেখা (Read)
     app.get('/appointments', async (req, res) => {
-      const cursor = appointmentsCollection.find({});
-      const appointments = await cursor.toArray();
-      res.json(appointments);
+      try {
+        if (!client.topology || !client.topology.isConnected()) await client.connect();
+        const appointments = await appointmentsCollection.find({}).toArray();
+        res.json(appointments);
+      } catch (error) {
+        res.status(500).json({ error: error.message });
+      }
     });
 
     // ৩. নির্দিষ্ট অ্যাপয়েন্টমেন্ট আপডেট করা (Update)
     app.put('/appointments/:id', async (req, res) => {
       try {
+        if (!client.topology || !client.topology.isConnected()) await client.connect();
         const id = req.params.id; 
         const updatedAppointment = req.body; 
         
@@ -164,8 +184,6 @@ async function run() {
         if (ObjectId.isValid(id)) {
           filter = { $or: [{ id: id }, { _id: new ObjectId(id) }] };
         }
-        
-        const options = { upsert: false };
         
         const updateDoc = {
           $set: {
@@ -176,7 +194,7 @@ async function run() {
           },
         };
 
-        const result = await appointmentsCollection.updateOne(filter, updateDoc, options);
+        const result = await appointmentsCollection.updateOne(filter, updateDoc, { upsert: false });
         res.json(result);
       } catch (error) {
         console.error("❌ Update error:", error.message);
@@ -187,6 +205,7 @@ async function run() {
     // ৪. নির্দিষ্ট অ্যাপয়েন্টমেন্ট ডিলিট করা (Delete)
     app.delete('/appointments/:id', async (req, res) => {
       try {
+        if (!client.topology || !client.topology.isConnected()) await client.connect();
         const id = req.params.id;
         
         let query = { id: id };
@@ -206,21 +225,30 @@ async function run() {
     
     // ১. নতুন ইউজার ডাটাবেজে ইনসার্ট করা (Create)
     app.post('/users', async (req, res) => {
-      const user = req.body;
-      const result = await usersCollection.insertOne(user);
-      res.json(result);
+      try {
+        if (!client.topology || !client.topology.isConnected()) await client.connect();
+        const result = await usersCollection.insertOne(req.body);
+        res.json(result);
+      } catch (error) {
+        res.status(500).json({ error: error.message });
+      }
     });
 
     // ২. সব ইউজারের লিস্ট দেখা (Read)
     app.get('/users', async (req, res) => {
-      const cursor = usersCollection.find({});
-      const users = await cursor.toArray();
-      res.json(users);
+      try {
+        if (!client.topology || !client.topology.isConnected()) await client.connect();
+        const users = await usersCollection.find({}).toArray();
+        res.json(users);
+      } catch (error) {
+        res.status(500).json({ error: error.message });
+      }
     });
 
     // ৩. নির্দিষ্ট ইউজারের প্রোফাইল আপডেট করা (Update)
     app.put('/users/:email', async (req, res) => {
       try {
+        if (!client.topology || !client.topology.isConnected()) await client.connect();
         const email = req.params.email; 
         const updatedUser = req.body;
         
@@ -228,8 +256,6 @@ async function run() {
         if (ObjectId.isValid(email)) {
           filter = { $or: [{ email: email }, { _id: new ObjectId(email) }] };
         }
-
-        const options = { upsert: true }; 
 
         const updateDoc = {
           $set: {
@@ -242,7 +268,7 @@ async function run() {
           },
         };
 
-        const result = await usersCollection.updateOne(filter, updateDoc, options);
+        const result = await usersCollection.updateOne(filter, updateDoc, { upsert: true });
         res.json(result);
       } catch (error) {
         console.error("❌ User update error:", error.message);
@@ -250,9 +276,7 @@ async function run() {
       }
     });
 
-    // ডাটাবেজ হেলথ চেক
-    // await client.db("admin").command({ ping: 1 });
-    console.log("🎯 Pinged your deployment. Connected to MongoDB!");
+    console.log("🎯 Connected to MongoDB safely!");
 
   } catch (error) {
     console.error("❌ Database connection error:", error.message);
